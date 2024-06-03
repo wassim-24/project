@@ -13,12 +13,9 @@ CONFIG_DELAY = 1   # Delay after configuring MCP23017
 SCAN_DELAY = 10    # Delay in seconds between each scan cycle
 
 class TCA9548A:
-    self.address = None
     def __init__(self, bus, address=0x70):
         self.bus = bus
-        
-    def setAddr(self,addr):
-        self.address = addr
+        self.address = address
 
     def select_all_channels(self):
         for attempt in range(RETRY_COUNT):
@@ -37,11 +34,9 @@ class TCA9548A:
         print("Failed to select all channels after retries.")
 
 class MCP23017:
-    self.address = None
-    def __init__(self, bus):
+    def __init__(self, bus, address):
         self.bus = bus
-    def setAddr(self,addr):
-        self.address = addr
+        self.address = address
 
     def configure_as_inputs_with_pullups(self):
         for attempt in range(RETRY_COUNT):
@@ -93,6 +88,17 @@ class MCP23017:
                 time.sleep(RETRY_DELAY)
         return None, None
 
+    def write_gpio(self, port, value):
+        reg = 0x14 if port == 'A' else 0x15  # OLATA or OLATB
+        for attempt in range(RETRY_COUNT):
+            try:
+                self.bus.write_byte_data(self.address, reg, value)
+                return True
+            except OSError as e:
+                print(f"Attempt {attempt + 1}: Error writing GPIO to MCP23017 at address {self.address:#02x}: {e}")
+                time.sleep(RETRY_DELAY)
+        return False
+
 def main():
     try:
         bus = smbus2.SMBus(I2C_BUS)
@@ -100,7 +106,7 @@ def main():
         print(f"Error: Could not open I2C bus: {e}")
         return
 
-    tca = TCA9548A(bus)
+    tca = TCA9548A(bus, TCA9548A_ADDR)
     tca.select_all_channels()  # Enable all channels at once
     mcp_addresses = [MCP23017_ADDR_BASE + i for i in range(8)]  # Possible addresses for MCP23017
 
@@ -131,6 +137,12 @@ def main():
                     for pin in range(8):
                         if not (gpiob & (1 << pin)):  # Check each pin of GPIOB
                             print(f"  GND detected at pin B{pin} in MCP23017 at address 0x{addr:02X}.")
+
+                    # Example write operation to GPIOA
+                    if mcp.write_gpio('A', 0xFF):
+                        print(f"  Successfully wrote to GPIOA in MCP23017 at address 0x{addr:02X}.")
+                    else:
+                        print(f"  Failed to write to GPIOA in MCP23017 at address 0x{addr:02X}.")
 
             time.sleep(SCAN_DELAY)  # Delay between scans to avoid overwhelming the I2C bus
 
