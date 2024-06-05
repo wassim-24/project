@@ -42,11 +42,19 @@ class MCP23017:
     def configure_as_inputs_with_pullups(self):
         for attempt in range(RETRY_COUNT):
             try:
-                self.bus.write_byte_data(self.address, 0x00, 0xFF)  # IODIRA register
-                self.bus.write_byte_data(self.address, 0x01, 0xFF)  # IODIRB register
-                self.bus.write_byte_data(self.address, 0x0C, 0xFF)  # GPPUA register
-                self.bus.write_byte_data(self.address, 0x0D, 0xFF)  # GPPUB register
-                return
+                if(self.address == MCP23017_ADDR_BASE):
+                    # Set all A pins as inputs except the first pin (A0), which is an output (0b11111110 = 0xFE)
+                    self.bus.write_byte_data(self.address, 0x00, 0xFE)  # IODIRA register
+                    self.bus.write_byte_data(self.address, 0x01, 0xFF)  # IODIRB register (all B pins as inputs)
+                    # Enable pull-up resistors on all A and B pins
+                    self.bus.write_byte_data(self.address, 0x0C, 0xFF)  # GPPUA register
+                    self.bus.write_byte_data(self.address, 0x0D, 0xFF)  # GPPUB register
+                else:
+                    self.bus.write_byte_data(self.address, 0x00, 0xFF)  # IODIRA register
+                    self.bus.write_byte_data(self.address, 0x01, 0xFF)  # IODIRB register
+                    self.bus.write_byte_data(self.address, 0x0C, 0xFF)  # GPPUA register
+                    self.bus.write_byte_data(self.address, 0x0D, 0xFF)  # GPPUB register
+                    return
             except OSError as e:
                 time.sleep(RETRY_DELAY)
         print(f"Failed to configure MCP23017 at address {self.address:#02x} after retries.")
@@ -68,6 +76,25 @@ class MCP23017:
         except OSError as e:
             print(f"Error reading GPIO from MCP23017 at address {self.address:#02x}: {e}")
             return None, None
+    def write_pin_high(self, pin):
+        if pin < 8:
+            current_state = self.bus.read_byte_data(self.address, 0x14)  # OLATA register
+            new_state = current_state | (1 << pin)
+            self.bus.write_byte_data(self.address, 0x14, new_state)
+        else:
+            current_state = self.bus.read_byte_data(self.address, 0x15)  # OLATB register
+            new_state = current_state | (1 << (pin - 8))
+            self.bus.write_byte_data(self.address, 0x15, new_state)
+
+    def write_pin_low(self, pin):
+        if pin < 8:
+            current_state = self.bus.read_byte_data(self.address, 0x14)  # OLATA register
+            new_state = current_state & ~(1 << pin)
+            self.bus.write_byte_data(self.address, 0x14, new_state)
+        else:
+            current_state = self.bus.read_byte_data(self.address, 0x15)  # OLATB register
+            new_state = current_state & ~(1 << (pin - 8))
+            self.bus.write_byte_data(self.address, 0x15, new_state)
 
 class PatternInfoExtractorApp:
     USERS = {
@@ -188,6 +215,10 @@ class PatternInfoExtractorApp:
                 if mcp.is_connected():
                     mcp.configure_as_inputs_with_pullups()
                     self.mcp_devices.append(mcp)
+            if not self.isOpen: 
+                self.mcp_devices[0].write_pin_high(0)
+            else:
+                self.mcp_devices[0].write_pin_low(0)   
         except Exception as e:
             print(f"Error initializing I2C devices: {e}")
 
@@ -274,6 +305,10 @@ class PatternInfoExtractorApp:
 
     def toggle_start(self):
         self.isOpen = not self.isOpen
+        if not self.isOpen: 
+            self.mcp_devices[0].write_pin_high(0)
+        else:
+            self.mcp_devices[0].write_pin_low(0)
         self.run_and_stop.config(text='STOP' if self.isOpen else 'START', bg="#FF0000" if self.isOpen else "#00FF00")
         if self.isOpen:
             self.detect_gnd_connections()
@@ -286,8 +321,12 @@ class PatternInfoExtractorApp:
                 self.tca.select_channel(channel)
                 for mcp in self.mcp_devices:
                     gpioa, gpiob = mcp.read_gpio()
+                    if mcp.address == MCP23017_ADDR_BASE:
+                        x = 1
+                    else:
+                        x = 0
                     if gpioa is not None and gpiob is not None:
-                        for pin in range(8):
+                        for pin in range(x,8):
                             if not (gpioa & (1 << pin)):
                                 self.switch_on(pin + 1 + channel * 16)
                             else:
